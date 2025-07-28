@@ -1,0 +1,245 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Minting Tokens
+
+In this lesson, we will learn how to create a new token and mint it to an account. To do this, we will need to understand two key account types in the SPL Token Program:
+
+- `Mint` Account: the account that defines the token (decimals, authorities, supply)
+- `Token` Account: an account that holds tokens for a specific owner
+
+## Mint Account
+
+The `Mint` account is an account that defines the token. Common examples of Mint accounts are: USDC, BONK, or JUP. Mint accounts contain the following information:
+
+- `mintAuthority`: the account that can mint new tokens (optional)
+- `supply`: the total supply of the token
+- `decimals`: the number of decimal places the token has
+- `is_initialized`: whether the mint account is initialized (always true if the account is initialized)
+- `freezeAuthority`: the account that can freeze token accounts (optional)
+
+*(source: [SPL Token Program](https://github.com/solana-program/token/blob/e1400276bbc590df1aaff6470c43e37a1e40c5cd/interface/src/state.rs#L16))*
+
+## Token Account
+
+The `Token` account is an account that holds tokens for a specific owner. It contains the following information:
+
+- `mint`: the mint account that the token is associated with
+- `owner`: the owner of the token account
+- `amount`: the amount of tokens the account holds
+- `delegate`: the account that has delegated authority to spend the tokens (optional)
+- `state`: the state of the token account (Uninitialized, Initialized, Frozen)
+- `is_native`: whether the token account is a native token account (optional)
+- `delegated_amount`: the amount of tokens that the delegate has authority to spend (optional)
+- `close_authority`: the account that can close the token account (optional)
+
+*(source: [SPL Token Program](https://github.com/solana-program/token/blob/e1400276bbc590df1aaff6470c43e37a1e40c5cd/interface/src/state.rs#L87))*
+
+For a wallet to "hold" a token, it needs to have a Token Account associated with that token mint.
+
+### Associated Token Account (ATA)
+
+In order to make interacting with tokens easier, we use a special type of Token Account called an Associated Token Account (ATA). ATA's are deterministic accounts that hold tokens for a specific owner. These addresses can easily be derived from the owner's public key and the token mint:
+
+```ts
+import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from "gill/programs";
+
+const [ata] = await findAssociatedTokenPda({
+  mint: mint.address,
+  owner: owner.address,
+  tokenProgram: TOKEN_PROGRAM_ADDRESS,
+});
+```
+
+
+> The `TOKEN_PROGRAM_ADDRESS` is a constant that is used to identify the Token Program. It is a public key that is used to identify the Token Program (`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`).
+
+## Minting Tokens
+
+Before we can mint any token, we'll need to:
+1. Create a new `Mint` account and initialize it as a *Mint* in the `Token` Program
+2. Create an `Associated Token Account` (ATA) for the recipient
+3. Mint tokens to that account
+
+> The amount of tokens we mint are "normalized" for decimals. This means that if we want to mint 1 token that has 6 decimals, we'll need to actually put `1e6` as amount
+
+### Setup
+
+Let's open up our `demo.ts` from the previous lesson and start building our `mintTo` function.
+
+For this lesson, we'll need to add some new imports. Add these to your existing imports at the top of the file:
+
+```ts
+import {
+  findAssociatedTokenPda,
+  getCreateAccountInstruction,
+  getCreateAssociatedTokenIdempotentInstruction,
+  getInitializeMintInstruction,
+  getMintSize,
+  getMintToInstruction,
+  TOKEN_PROGRAM_ADDRESS,
+} from "gill/programs";
+```
+
+Let's add a configuration object to define our token parameters that we will use throughout the course. Add this after your imports:
+
+```ts
+const TOKEN_CONFIG = {
+  decimals: 6,
+  dropAmount: 1000,
+  transferAmount: 100,
+  burnAmount: 25,
+  delegateAmount: 100,
+};
+```
+
+### Mint to Function
+
+Now let's create our `mintTo` function. This function will:
+1. Generate keypairs for the mint and accounts
+2. Create and initialize the mint account
+3. Create an Associated Token Account
+4. Mint tokens to that account
+5. Print the transaction signature on the explorer
+
+Replace the `sendMemo` function with the following `mintTo` function:
+
+```ts
+async function mintTo(client: SolanaClient, feePayer: KeyPairSigner) {
+  const mint = await generateKeyPairSigner();
+  const mintAuthority = await generateKeyPairSigner();
+  const owner = await generateKeyPairSigner();
+
+  // Get Owner ATA
+  const [ata] = await findAssociatedTokenPda({
+    mint: mint.address,
+    owner: owner.address,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+  });
+
+  // Get Mint size & rent
+  const mintSpace = BigInt(getMintSize());
+  const mintRent = await client.rpc.getMinimumBalanceForRentExemption(mintSpace).send();
+
+  const instructions = [
+    // Create the Mint Account
+    getCreateAccountInstruction({
+      payer: feePayer,
+      newAccount: mint,
+      lamports: mintRent,
+      space: mintSpace,
+      programAddress: TOKEN_PROGRAM_ADDRESS,
+    }),
+    // Initialize the Mint
+    getInitializeMintInstruction(
+      {
+        mint: mint.address,
+        decimals: TOKEN_CONFIG.decimals,
+        mintAuthority: mintAuthority.address,
+        freezeAuthority: mintAuthority.address,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+    // Create Associated Token Account
+    getCreateAssociatedTokenIdempotentInstruction({
+      mint: mint.address,
+      payer: feePayer,
+      owner: owner.address,
+      ata,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    }),
+    // Mint To the Destination Associated Token Account
+    getMintToInstruction(
+      {
+        mint: mint.address,
+        token: ata,
+        amount: BigInt(TOKEN_CONFIG.dropAmount * 10 ** TOKEN_CONFIG.decimals),
+        mintAuthority,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `1. Mint to: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return { mint, mintAuthority, owner, ata };
+}
+```
+
+Let's break down what each instruction does:
+
+1. **`getCreateAccountInstruction`**: Creates a new account on Solana that will hold our mint data. We need to allocate space and pay rent for this account.
+
+2. **`getInitializeMintInstruction`**: Initializes the mint account with:
+   - `decimals`: How many decimal places our token has
+   - `mintAuthority`: Who can mint new tokens
+   - `freezeAuthority`: Who can freeze token accounts
+
+3. **`getCreateAssociatedTokenIdempotentInstruction`**: Creates an Associated Token Account (ATA) for the owner. This is where the tokens will be stored. The "idempotent" version won't fail if the account already exists.
+
+4. **`getMintToInstruction`**: Actually mints the tokens to the ATA. Note how we multiply the amount by `10 ** decimals` to account for decimal places.
+
+
+### Common Errors and Solutions
+
+This series of instructions is a common pattern for minting tokens and can be tricky to get right. Make sure you:
+- specify the correct program address for each instruction
+- order the instructions correctly
+- use the correct parameters for each instruction
+- have enough SOL to pay for the transaction
+
+### Call the Function
+
+Now update your `main` function to call the `mintTo` function:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2 - 7...Future lessons
+
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+Thanks to our helpful explorer link from Gill, we can easily inspect the transaction logs on the Solana Explorer to see each of the instructions that were executed:
+
+![Mint Transaction](/graphics/course-content/spl-token-with-gill/mint-to.png)
+
+Congratulations! You've successfully created a new SPL token and minted 1,000 tokens (with 6 decimal places) to an Associated Token Account.
+
+## Key Concepts
+
+- **Mint Account**: The account that defines the token (decimals, authorities, supply)
+- **Associated Token Account (ATA)**: A deterministic account that holds tokens for a specific owner
+- **Mint Authority**: The account that can create new tokens
+- **Freeze Authority**: The account that can freeze/unfreeze token accounts
+- **Decimals**: Tokens use integer math, so we multiply by 10^decimals for precision
+
+We will use our new token mint throughout this course, so save your code and continue to the next lesson, where we'll learn how to transfer these tokens to another account.

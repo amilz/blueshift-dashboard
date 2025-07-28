@@ -50,6 +50,20 @@
         "conclusions": "Conclusions"
       }
     },
+    "spl-token-with-gill": { 
+      "title": "SPL Token with Gill",
+      "lessons": {
+        "introduction": "Introduction",
+        "mint-to": "Mint To",
+        "transfer": "Transfer",
+        "burn": "Burn",
+        "close-account": "Close Account",
+        "approve-and-revoke": "Approve and Revoke",
+        "freeze-and-thaw": "Freeze and Thaw",
+        "set-authority": "Set Authority",
+        "wrap-up": "Wrap Up"
+      }
+    },
     "spl-token-with-anchor": {
       "title": "SPL Token with Anchor",
       "lessons": {

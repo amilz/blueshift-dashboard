@@ -1,0 +1,167 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Freeze and Thaw Instructions
+
+The SPL Token Program provides `freeze` and `thaw` instructions that allow the freeze authority to temporarily disable token account operations. This is useful for regulatory compliance, security measures, or handling disputes.
+
+In this lesson, we'll:
+1. Freeze a token account to prevent any operations
+2. Thaw the account to restore normal functionality
+
+## Setup
+
+For this lesson, we need to add two new imports to our existing imports:
+
+```ts
+import {
+  getFreezeAccountInstruction,
+  getThawAccountInstruction,
+} from "gill/programs";
+```
+
+## Freeze Function
+
+Let's create our `freeze` function. This function will:
+1. Freeze a token account, preventing all outgoing operations
+
+Add this function after your `revoke` function:
+
+```ts
+async function freeze(client: SolanaClient, feePayer: KeyPairSigner, mint: KeyPairSigner, authority: KeyPairSigner, ata: Address) {
+  const instructions = [
+    getFreezeAccountInstruction({
+      account: ata,
+      mint: mint.address,
+      owner: authority,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `6A. Freeze: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+```
+
+## Thaw Function
+
+Now let's create our `thaw` function. This function will:
+1. Unfreeze the token account, restoring normal operations
+
+Add this function after your `freeze` function:
+
+```ts
+async function thaw(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  authority: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getThawAccountInstruction({
+      account: ata,
+      mint: mint.address,
+      owner: authority,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `6B. Thaw: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+```
+
+Both `getFreezeAccountInstruction` and `getThawAccountInstruction` require:
+- **`account`**: The token account to freeze/thaw
+- **`mint`**: The mint address of the token
+- **`owner`**: The freeze authority (must sign the transaction)
+
+> Important: The `owner` parameter here is actually the freeze authority, not the token account owner. Only the freeze authority can freeze and thaw accounts.
+
+## Main Function
+
+Now update your `main` function to call both functions:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2. Transfer
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+
+  // 3. Burn from receiver's account
+  await burn(client, feePayer, mint, receiver, receiverAta);
+
+  // 4. Close Account
+  await closeAccount(client, feePayer, mint, receiver, receiverAta);
+
+  // 5. Approve and Revoke
+  await approve(client, feePayer, owner, ata);
+  await revoke(client, feePayer, owner, ata);
+
+  // 6. Freeze and Thaw
+  await freeze(client, feePayer, mint, mintAuthority, ata);
+  await thaw(client, feePayer, mint, mintAuthority, ata);
+
+  // 7...Future lessons
+
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+2. Transfer: https://explorer.solana.com/tx/...?cluster=localhost
+3. Burn: https://explorer.solana.com/tx/...?cluster=localhost
+4. Close Account: https://explorer.solana.com/tx/...?cluster=localhost
+5A. Approve: https://explorer.solana.com/tx/...?cluster=localhost
+5B. Revoke: https://explorer.solana.com/tx/...?cluster=localhost
+6A. Freeze: https://explorer.solana.com/tx/...?cluster=localhost
+6B. Thaw: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+## Freeze State Effects
+
+When an account is frozen:
+- ❌ Cannot transfer tokens out
+- ❌ Cannot receive tokens (transfers in or mint to)
+- ❌ Cannot burn tokens  
+- ❌ Cannot approve/revoke delegates
+
+When thawed:
+- All normal operations are restored immediately
+
+## Key Concepts
+
+- **Freeze Authority**: Only the freeze authority can freeze/thaw accounts
+- **Account-Level Control**: Freezing affects individual token accounts, not the entire mint
+- **Use Cases**: Regulatory compliance, security incidents, dispute resolution
+
+The freeze authority is set when the mint is initialized and can be set to `null` to create "unfreezable" tokens. 
+
+In the next lesson, we'll learn how to transfer authorities to new owners.

@@ -1,0 +1,131 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Burning Tokens
+
+The SPL Token Program provides a `burn` instruction that allows you to destroy tokens from a token account. This is a powerful feature that can be used to:
+
+- Deflationary tokenomics
+- Fee mechanisms
+- Supply management
+- NFT collection management
+- ...or general chaos 🔥🔥🔥
+
+Only the owner of the token account or its delegate can burn tokens from it.
+
+In this lesson, we'll burn (destroy) some tokens from the receiver's account. This permanently reduces the token supply and cannot be reversed.
+
+## Setup
+
+For this lesson, we need to add one new import to our existing imports:
+
+```ts
+import {
+  getBurnCheckedInstruction,
+} from "gill/programs";
+```
+## Burn Function
+
+Now let's create our `burn` function. This function will:
+1. Burn a specified amount of tokens from the receiver's account
+2. Permanently reduce the token mint's supply
+
+Add this function after your `transfer` function:
+
+```ts
+async function burn(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getBurnCheckedInstruction(
+      {
+        mint: mint.address,
+        account: ata,
+        amount: BigInt(TOKEN_CONFIG.burnAmount * 10 ** TOKEN_CONFIG.decimals),
+        authority: owner,
+        decimals: TOKEN_CONFIG.decimals,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `3. Burn: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+```
+
+The `getBurnCheckedInstruction` requires:
+- **`mint`**: The mint address to verify we're burning the correct token
+- **`account`**: The token account from which to burn tokens
+- **`amount`**: The number of tokens to burn (accounting for decimals)
+- **`authority`**: The owner of the token account (must sign the transaction)
+- **`decimals`**: The token's decimal places for proper amount calculation
+
+The "checked" version of burn provides extra safety by verifying the mint and decimals match what's expected.
+
+### Main Function
+
+Now update your `main` function to call the `burn` function. Note that we're burning from the receiver's account:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2. Transfer
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+
+  // 3. Burn from receiver's account
+  await burn(client, feePayer, mint, receiver, receiverAta);
+
+  // 4 - 7...Future lessons
+
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+2. Transfer: https://explorer.solana.com/tx/...?cluster=localhost
+3. Burn: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+After burning:
+- The owner's account still has 900 tokens
+- The receiver's account now has 75 tokens (100 received - 25 burned)
+- The total supply has been permanently reduced by 25 tokens. You can verify this on Solana Explorer by going to the Mint account page:
+
+    ![Burned Tokens](/graphics/course-content/spl-token-with-gill/burn.png)
+
+
+## Recap
+
+- **Permanent Destruction**: Burned tokens are permanently removed from circulation. This process is irreversible.
+- **Supply Reduction**: Burning reduces the total supply of the token
+- **Owner Authorization**: Only the owner (or delegate) of a token account can burn tokens from it
+
+Burning does not close the token account (it just reduces the balance). We will learn how to close token accounts to reclaim the rent in the next lesson.

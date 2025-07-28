@@ -1,0 +1,152 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Transfer Instruction
+
+In this lesson, we'll transfer some of the tokens we minted in the previous lesson to a new recipient. This requires:
+1. Creating an Associated Token Account for the recipient
+2. Transferring tokens from the owner's token account to the recipient's token account
+
+
+## Setup
+
+For this lesson, we need to add these new imports to our existing imports:
+
+```ts
+import {
+    Address,
+} from "gill";
+import {
+  getTransferCheckedInstruction,
+} from "gill/programs";
+```
+
+## Transfer Function
+
+Before we can transfer tokens from one account to another, we need to make sure the recipient has an associated token account for the token mint. We will use the same `CreateAssociatedTokenIdempotent` instruction we used in the previous lesson, which will create the ATA if it doesn't exist.
+
+Now let's create our `transfer` function. This function will:
+1. Generate a new recipient keypair
+2. Create an Associated Token Account for the recipient based on the token mint and recipient address
+3. Transfer tokens from the owner's token account to the recipient's token account
+
+Add this function after your `mintTo` function:
+
+```ts
+async function transfer(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const receiver = await generateKeyPairSigner();
+
+  // Get Receiver ATA
+  const [receiverAta] = await findAssociatedTokenPda({
+    mint: mint.address,
+    owner: receiver.address,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+  });
+
+  const instructions = [
+    // Create Associated Token Account for receiver
+    getCreateAssociatedTokenIdempotentInstruction({
+      mint: mint.address,
+      payer: feePayer,
+      owner: receiver.address,
+      ata: receiverAta,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    }),
+
+    // Transfer from Owner to Receiver
+    getTransferCheckedInstruction(
+      {
+        source: ata,
+        mint: mint.address,
+        destination: receiverAta,
+        authority: owner,
+        amount: BigInt(TOKEN_CONFIG.transferAmount * 10 ** TOKEN_CONFIG.decimals),
+        decimals: TOKEN_CONFIG.decimals,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  
+  console.log(
+    `2. Transfer: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return { receiver, receiverAta };
+}
+```
+
+Let's break down what each instruction does:
+
+1. **`getCreateAssociatedTokenIdempotentInstruction`**: Creates an Associated Token Account for the receiver. We use the idempotent version so it won't fail if the account already exists.
+
+2. **`getTransferCheckedInstruction`**: Transfers tokens from the source account to the destination account. The "checked" version requires:
+   - The mint address to verify we're transferring the correct token
+   - The decimals to ensure proper amount calculation
+   - The authority (owner) must sign the transaction
+   - *Note that the `source` and `destination` are both token accounts, not the owner's wallet address*
+
+Note that we're transferring 100 tokens (as defined in `TOKEN_CONFIG.transferAmount`) from the owner's ATA to the receiver's ATA.
+
+> You may be wondering why the function has *Checked* in the name. This is a common pattern in the SPL Token Program that means that the instruction will check the mint and decimals of the token before performing the action. This is a good thing because it prevents us from transferring the wrong token or amount of tokens.
+
+### Main Function
+
+Now update your `main` function to call the `transfer` function:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2. Transfer
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+
+  // 3 - 7...Future lessons
+
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+2. Transfer: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+Follow the link to the transaction on the Solana Explorer to confirm that the transfer was successful:
+
+![Transfer Transaction](/graphics/course-content/spl-token-with-gill/transfer.png)
+
+## Key Concepts
+
+- **Transfer Authority**: Only the owner of the source account can authorize transfers
+- **Associated Token Accounts**: Each wallet needs its own ATA for each token type
+- **Transfer Checked**: The safer version of transfer that validates the mint and decimals
+- **Atomic Operations**: Both the ATA creation and transfer happen in a single transaction
+
+In the next lesson, we'll learn how to burn (destroy) tokens permanently.

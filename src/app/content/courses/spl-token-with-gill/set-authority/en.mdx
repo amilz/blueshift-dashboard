@@ -1,0 +1,184 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Set Authority Instructions
+
+The SPL Token Program provides a `set authority` instruction that allows you to transfer ownership of various authorities to a new address. This is critical for decentralization, multi-sig setups, or renouncing control.
+
+In this lesson, we'll transfer three different types of authorities:
+1. Mint authority - who can create new tokens
+2. Freeze authority - who can freeze/thaw accounts  
+3. Account owner authority - who owns a token account
+
+## Setup
+
+For this lesson, we need to add one new import to our existing imports:
+
+```ts
+import {
+  AuthorityType,
+  getSetAuthorityInstruction,
+} from "gill/programs";
+```
+
+## Set Authority Function
+
+Let's create our `setAuthority` function. This function will:
+1. Generate a new authority account
+2. Transfer mint authority to the new account
+3. Transfer freeze authority to the new account
+4. Transfer token account ownership to the new account
+
+Add this function after your `thaw` function:
+
+```ts
+async function setAuthority(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  authority: KeyPairSigner,
+  ata: Address,
+  ataOwner: KeyPairSigner
+) {
+  const newAuthority = await generateKeyPairSigner();
+  console.log(`Transferring all authorities to: ${newAuthority.address}`);
+  
+  const instructions = [
+    // Set new Mint Authority
+    getSetAuthorityInstruction({
+      owned: mint.address,
+      owner: authority,
+      authorityType: AuthorityType.MintTokens,
+      newAuthority: newAuthority.address,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+    
+    // Set new Freeze Authority
+    getSetAuthorityInstruction({
+      owned: mint.address,
+      owner: authority,
+      authorityType: AuthorityType.FreezeAccount,
+      newAuthority: newAuthority.address,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+    
+    // Set new Token Account Owner
+    getSetAuthorityInstruction({
+      owned: ata,
+      owner: ataOwner,
+      authorityType: AuthorityType.AccountOwner,
+      newAuthority: newAuthority.address,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `7. Set Authority: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+  
+  return newAuthority;
+}
+```
+
+The `AuthorityType` enum includes:
+- **`MintTokens`**: Authority to mint new tokens (affects the mint account)
+- **`FreezeAccount`**: Authority to freeze/thaw token accounts (affects the mint account)
+- **`AccountOwner`**: Owner of a specific token account (affects the token account)
+- **`CloseAccount`**: Authority to close a token account (usually same as owner)
+
+Each `getSetAuthorityInstruction` requires:
+- **`owned`**: The account whose authority is being changed
+- **`owner`**: The current authority (must sign)
+- **`authorityType`**: Which type of authority to transfer
+- **`newAuthority`**: The new authority address (or null to revoke)
+
+We have included 3 instructions in this example to see how to set the mint authority, freeze authority, and token account owner authority.
+
+## Main Function
+
+Now update your `main` function to call the `setAuthority` function:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2. Transfer
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+
+  // 3. Burn from receiver's account
+  await burn(client, feePayer, mint, receiver, receiverAta);
+
+  // 4. Close Account
+  await closeAccount(client, feePayer, mint, receiver, receiverAta);
+
+  // 5. Approve and Revoke
+  await approve(client, feePayer, owner, ata);
+  await revoke(client, feePayer, owner, ata);
+
+  // 6. Freeze and Thaw
+  await freeze(client, feePayer, mint, mintAuthority, ata);
+  await thaw(client, feePayer, mint, mintAuthority, ata);
+  
+  // 7. Set Authority
+  await setAuthority(client, feePayer, mint, mintAuthority, ata, owner);
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+2. Transfer: https://explorer.solana.com/tx/...?cluster=localhost
+3. Burn: https://explorer.solana.com/tx/...?cluster=localhost
+4. Close Account: https://explorer.solana.com/tx/...?cluster=localhost
+5A. Approve: https://explorer.solana.com/tx/...?cluster=localhost
+5B. Revoke: https://explorer.solana.com/tx/...?cluster=localhost
+6A. Freeze: https://explorer.solana.com/tx/...?cluster=localhost
+6B. Thaw: https://explorer.solana.com/tx/...?cluster=localhost
+7. Set Authority: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+After transferring authorities:
+- The original `mintAuthority` can no longer mint tokens
+- The original `mintAuthority` can no longer freeze/thaw accounts
+- The original `owner` no longer controls the token account
+- The `newAuthority` now has full control over minting, freezing, and the token account
+
+## Common Authority Patterns
+
+**Renounce Control**: Set authority to `null` to permanently disable that authority
+```ts
+// Example: Create a fixed supply token
+getSetAuthorityInstruction({
+  owned: mint.address,
+  owner: authority,
+  authorityType: AuthorityType.MintTokens,
+  newAuthority: null, // Renounce mint authority
+})
+```
+
+**Multi-sig Integration**: Transfer authorities to multi-signature wallets/DAO governance program wallets for governance
+
+## Key Concepts
+
+- **Renouncing Control**: Set authority to `null` to permanently disable that authority. This is a common pattern for creating a fixed supply token.
+
+Authority transfers are a critical security operation - double-check addresses before executing as they're irreversible.
+
+Congratulations! You've learned all the major SPL Token operations. In the final lesson, we'll review what we've built and discuss next steps.
