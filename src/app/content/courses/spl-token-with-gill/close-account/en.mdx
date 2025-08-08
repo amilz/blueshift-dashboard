@@ -1,0 +1,151 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Closing Token Accounts
+
+To store data on Solana, program accounts must also keep a lamport (SOL) balance that's proportional to the amount of data stored on the account (in bytes). This balance is called "rent," but it works more like a deposit because you can recover the full amount when you close an account. 
+
+The SPL Token Program provides a `close account` instruction that allows you to close a token account and reclaim the SOL used for rent. This is useful for cleaning up unused accounts and reclaiming SOL.
+
+In this lesson, we'll close the receiver's token account after burning any remaining tokens. This is important for reclaiming the SOL used for rent.
+
+## Setup
+
+For this lesson, we need to add one new import to our existing imports:
+
+```ts
+import {  
+  stringifiedBigInt
+} from "gill";
+import {
+  getCloseAccountInstruction,
+} from "gill/programs";
+```
+
+## Close Account Function
+
+Now let's create our `closeAccount` function. This function will:
+1. Check if the account has any remaining balance
+2. Burn any remaining tokens (if necessary)
+3. Close the account and reclaim the rent
+
+Add this function after your `burn` function:
+
+```ts
+async function closeAccount(
+    client: SolanaClient,
+    feePayer: KeyPairSigner,
+    mint: KeyPairSigner,
+    owner: KeyPairSigner,
+    ata: Address
+) {
+    // Define the close account instruction
+    const instructions = [
+        getCloseAccountInstruction(
+            {
+                account: ata,
+                destination: feePayer.address,
+                owner,
+            },
+            { programAddress: TOKEN_PROGRAM_ADDRESS }
+        ),
+    ];
+
+    // Check if there's a remaining balance
+    const balance = await client.rpc.getTokenAccountBalance(ata).send();
+
+    if (balance.value.amount !== stringifiedBigInt("0")) {
+        // If there's a balance, add burn instruction to the beginning of the instructions array
+        instructions.unshift(
+            getBurnCheckedInstruction(
+                {
+                    mint: mint.address,
+                    account: ata,
+                    amount: Number(balance.value.amount),
+                    authority: owner,
+                    decimals: TOKEN_CONFIG.decimals,
+                },
+                { programAddress: TOKEN_PROGRAM_ADDRESS }
+            )
+        );
+    }
+
+    const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+    console.log(
+        `4. Close Account: ${getExplorerLink({
+            cluster: "localhost",
+            transaction: signature,
+        })}`
+    );
+}
+```
+
+The `getCloseAccountInstruction` requires:
+- **`account`**: The token account to close
+- **`destination`**: Where to send the reclaimed SOL rent
+- **`owner`**: The account owner (must sign the transaction)
+
+The function handles two scenarios:
+1. **Account has tokens**: We first burn all remaining tokens, then close the account
+2. **Account is empty**: We directly close the account
+
+## Main Function
+
+Now update your `main` function to call the `closeAccount` function:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2. Transfer
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+
+  // 3. Burn from receiver's account
+  await burn(client, feePayer, mint, receiver, receiverAta);
+
+  // 4. Close Account
+  await closeAccount(client, feePayer, mint, receiver, receiverAta);
+
+  // 5 - 7...Future lessons
+
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+2. Transfer: https://explorer.solana.com/tx/...?cluster=localhost
+3. Burn: https://explorer.solana.com/tx/...?cluster=localhost
+4. Close Account: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+When you close a token account:
+1. The account data is deleted from the blockchain
+2. The SOL used for rent-exemption is returned to the destination address
+3. The account can no longer be used (unless it is recreated)
+
+## Key Concepts
+
+- **Rent Reclamation**: Closing accounts returns the SOL used for rent
+- **Zero Balance Required**: Accounts must have 0 tokens before closing
+- **Atomic Operations**: We can burn and close in a single transaction
+
+Once closed, an account address can be recreated later if needed. Associated Token Accounts will have the same address if recreated.
+
+In the next lesson, we'll learn how to approve delegates and revoke their permissions.

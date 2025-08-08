@@ -137,6 +137,25 @@ const allCourses: CourseMetadata[] = withCourseNumber([
       { slug: "token-extensions" },
       { slug: "conclusions" },
     ],
+  }
+  ,
+  {
+    slug: "spl-token-with-gill",
+    language: "Typescript",
+    color: "105,162,241",
+    difficulty: 1,
+    isFeatured: true,
+    lessons: [
+      { slug: "introduction" },
+      { slug: "mint-to" },
+      { slug: "transfer" },
+      { slug: "burn" },
+      { slug: "close-account"},
+      { slug: "approve-and-revoke"},
+      { slug: "freeze-and-thaw"},
+      { slug: "set-authority"},
+      { slug: "wrap-up" },
+    ],
   },
   {
     slug: "token-2022-with-web3js",

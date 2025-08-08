@@ -1,0 +1,492 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Wrap Up
+
+Congratulations! You've successfully completed the SPL Token course using Gill. You've learned how to perform all the essential token operations on Solana.
+
+## Recap 
+
+Throughout this course, you've built a complete SPL token application that demonstrates:
+
+1. **Minting Tokens**: Creating a new token mint and minting initial supply
+2. **Transferring Tokens**: Moving tokens between accounts
+3. **Burning Tokens**: Permanently destroying tokens to reduce supply
+4. **Closing Accounts**: Reclaiming rent from unused token accounts
+5. **Delegation**: Approving and revoking delegate permissions
+6. **Freezing**: Controlling token account access for compliance
+7. **Authority Management**: Transferring control of mints and accounts
+
+### SPL Token Concepts
+
+- **Mints**: A mint is an account that defines the token's properties
+- **Accounts Model**: Tokens are stored in accounts separate from wallets
+- **Associated Token Accounts**: Deterministic addresses for token storage
+- **Authorities**: Different permission levels for different operations
+- **Atomic Transactions**: Multiple instructions can be bundled together
+
+### Gill Features
+
+- **Simplified API**: Gill provides clean, functional interfaces for complex operations (e.g., `sendAndConfirmInstructions`).
+- **Solana Programs**: Gill exports many common Solana programs through the `gill/programs` module. Additionally, programs can generate Gill-compatible tools easily with tools like [Codama](https://github.com/codama-idl/codama).
+- **Type Safety**: Full TypeScript support prevents common errors at build time.
+- **Efficient Bundling**: Tree-shakable design keeps your app lightweight
+
+## Next Steps
+
+You've successfully learned how to work with SPL tokens using Gill. You can continue to build on your knowledge by exploring the following topics:
+
+- **Token Extensions**: Explore Transfer Fees, Interest-Bearing tokens, and more
+- **Metadata**: Add rich metadata to your tokens using Metaplex
+- **Token-2022**: Learn about the new token program with enhanced features
+
+Keep building, keep learning, and welcome to the Solana ecosystem! 
+
+## Additional Resources
+
+- [SPL Token Program Documentation](https://spl.solana.com/token)
+- [SPL Token Program Source Code](https://github.com/solana-program/token)
+- [Gill Documentation](https://gill.site/)
+- [Gill GitHub](https://github.com/DecalLabs/gill)
+- [Solana Kit Documentation](https://github.com/anza-xyz/kit)
+- [Solana Developers](https://solana.com/developers/cookbook/tokens/create-mint-account)
+- [Solana Stack Exchange](https://solana.stackexchange.com/)
+
+## Complete Code
+
+Here's the complete `demo.ts` file with all the functions we've built:
+
+```ts
+import {
+  airdropFactory,
+  createSolanaClient,
+  generateKeyPairSigner,
+  KeyPairSigner,
+  lamports,
+  LAMPORTS_PER_SOL,
+  sendAndConfirmInstructions,
+  SolanaClient,
+  getExplorerLink,
+  Address,
+  stringifiedBigInt,
+  SolanaError,
+} from "gill";
+import {
+  AuthorityType,
+  getSetAuthorityInstruction,
+  getBurnCheckedInstruction,
+  getTransferCheckedInstruction,
+  getCloseAccountInstruction,
+  findAssociatedTokenPda,
+  getCreateAccountInstruction,
+  getCreateAssociatedTokenIdempotentInstruction,
+  getInitializeMintInstruction,
+  getMintSize,
+  getMintToInstruction,
+  TOKEN_PROGRAM_ADDRESS,
+  getApproveInstruction,
+  getRevokeInstruction,
+  getFreezeAccountInstruction,
+  getThawAccountInstruction,
+} from "gill/programs";
+const TOKEN_CONFIG = {
+  decimals: 6,
+  dropAmount: 1000,
+  transferAmount: 100,
+  burnAmount: 25,
+  delegateAmount: 100,
+};
+
+async function setup() {
+  const client = createSolanaClient({
+    urlOrMoniker: "http://127.0.0.1:8899", // or use 'devnet' if you prefer
+  });
+
+  const feePayer = await generateKeyPairSigner();
+
+  await airdropFactory({
+    rpc: client.rpc,
+    rpcSubscriptions: client.rpcSubscriptions,
+  })({
+    commitment: "confirmed",
+    lamports: lamports(BigInt(LAMPORTS_PER_SOL)),
+    recipientAddress: feePayer.address,
+  });
+
+  return { client, feePayer };
+}
+
+async function transfer(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const receiver = await generateKeyPairSigner();
+
+  // Get Receiver ATA
+  const [receiverAta] = await findAssociatedTokenPda({
+    mint: mint.address,
+    owner: receiver.address,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+  });
+
+  const instructions = [
+    // Create Associated Token Account for receiver
+    getCreateAssociatedTokenIdempotentInstruction({
+      mint: mint.address,
+      payer: feePayer,
+      owner: receiver.address,
+      ata: receiverAta,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    }),
+
+    // Transfer from Owner to Receiver
+    getTransferCheckedInstruction(
+      {
+        source: ata,
+        mint: mint.address,
+        destination: receiverAta,
+        authority: owner,
+        amount: BigInt(TOKEN_CONFIG.transferAmount * 10 ** TOKEN_CONFIG.decimals),
+        decimals: TOKEN_CONFIG.decimals,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `2. Transfer: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return { receiver, receiverAta };
+}
+
+async function mintTo(client: SolanaClient, feePayer: KeyPairSigner) {
+  const mint = await generateKeyPairSigner();
+  const mintAuthority = await generateKeyPairSigner();
+  const owner = await generateKeyPairSigner();
+
+  // Get Owner ATA
+  const [ata] = await findAssociatedTokenPda({
+    mint: mint.address,
+    owner: owner.address,
+    tokenProgram: TOKEN_PROGRAM_ADDRESS,
+  });
+
+  // Get Mint size & rent
+  const mintSpace = BigInt(getMintSize());
+  const mintRent = await client.rpc.getMinimumBalanceForRentExemption(mintSpace).send();
+
+  const instructions = [
+    // Create the Mint Account
+    getCreateAccountInstruction({
+      payer: feePayer,
+      newAccount: mint,
+      lamports: mintRent,
+      space: mintSpace,
+      programAddress: TOKEN_PROGRAM_ADDRESS,
+    }),
+    // Initialize the Mint
+    getInitializeMintInstruction(
+      {
+        mint: mint.address,
+        decimals: TOKEN_CONFIG.decimals,
+        mintAuthority: mintAuthority.address,
+        freezeAuthority: mintAuthority.address,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+    // Create Associated Token Account
+    getCreateAssociatedTokenIdempotentInstruction({
+      mint: mint.address,
+      payer: feePayer,
+      owner: owner.address,
+      ata,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    }),
+    // Mint To the Destination Associated Token Account
+    getMintToInstruction(
+      {
+        mint: mint.address,
+        token: ata,
+        amount: BigInt(TOKEN_CONFIG.dropAmount * 10 ** TOKEN_CONFIG.decimals),
+        mintAuthority,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `1. Mint to: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return { mint, mintAuthority, owner, ata };
+}
+async function burn(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getBurnCheckedInstruction(
+      {
+        mint: mint.address,
+        account: ata,
+        amount: BigInt(TOKEN_CONFIG.burnAmount * 10 ** TOKEN_CONFIG.decimals),
+        authority: owner,
+        decimals: TOKEN_CONFIG.decimals,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `3. Burn: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+
+async function closeAccount(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getCloseAccountInstruction(
+      {
+        account: ata,
+        destination: feePayer.address,
+        owner,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  // Check if there's a remaining balance
+  const balance = await client.rpc.getTokenAccountBalance(ata).send();
+
+  if (balance.value.amount !== stringifiedBigInt("0")) {
+    // If there's a balance, burn it first
+    instructions.unshift(
+      getBurnCheckedInstruction(
+        {
+          mint: mint.address,
+          account: ata,
+          amount: Number(balance.value.amount),
+          authority: owner,
+          decimals: TOKEN_CONFIG.decimals,
+        },
+        { programAddress: TOKEN_PROGRAM_ADDRESS }
+      )
+    );
+  }
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `4. Close Account: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+async function approve(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const delegate = await generateKeyPairSigner();
+
+  const instructions = [
+    getApproveInstruction(
+      {
+        source: ata,
+        delegate: delegate.address,
+        owner,
+        amount: BigInt(TOKEN_CONFIG.delegateAmount * 10 ** TOKEN_CONFIG.decimals),
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `5A. Approve: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return delegate;
+}
+async function revoke(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getRevokeInstruction(
+      {
+        source: ata,
+        owner,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `5B. Revoke: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+
+async function freeze(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  authority: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getFreezeAccountInstruction(
+      {
+        account: ata,
+        mint: mint.address,
+        owner: authority,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `6A. Freeze: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+async function thaw(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  authority: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getThawAccountInstruction(
+      {
+        account: ata,
+        mint: mint.address,
+        owner: authority,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `6B. Thaw: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+
+async function setAuthority(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  mint: KeyPairSigner,
+  authority: KeyPairSigner,
+  ata: Address,
+  ataOwner: KeyPairSigner
+) {
+  const newAuthority = await generateKeyPairSigner();
+
+  const instructions = [
+    // Set new Mint Authority
+    getSetAuthorityInstruction(
+      {
+        owned: mint.address,
+        owner: authority,
+        authorityType: AuthorityType.MintTokens,
+        newAuthority: newAuthority.address,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+
+    // Set new Freeze Authority
+    getSetAuthorityInstruction(
+      {
+        owned: mint.address,
+        owner: authority,
+        authorityType: AuthorityType.FreezeAccount,
+        newAuthority: newAuthority.address,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+
+    // Set new Token Account Owner
+    getSetAuthorityInstruction(
+      {
+        owned: ata,
+        owner: ataOwner,
+        authorityType: AuthorityType.AccountOwner,
+        newAuthority: newAuthority.address,
+      },
+      { programAddress: TOKEN_PROGRAM_ADDRESS }
+    ),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `7. Set Authority: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return newAuthority;
+}
+
+async function main() {
+  const { client, feePayer } = await setup();
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+  await burn(client, feePayer, mint, receiver, receiverAta);
+  await closeAccount(client, feePayer, mint, receiver, receiverAta);
+  await approve(client, feePayer, owner, ata);
+  await revoke(client, feePayer, owner, ata);
+  await freeze(client, feePayer, mint, mintAuthority, ata);
+  await thaw(client, feePayer, mint, mintAuthority, ata);
+  await setAuthority(client, feePayer, mint, mintAuthority, ata, owner);
+}
+
+main().catch(error => {
+  if (error instanceof SolanaError) {
+    console.error("Error code:", error.cause);
+  } else {
+    console.error("Error:", error);
+  }
+});
+```

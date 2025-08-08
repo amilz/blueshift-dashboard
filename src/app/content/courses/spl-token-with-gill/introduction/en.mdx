@@ -1,0 +1,305 @@
+# SPL Token with Gill
+
+This course will teach you how to build and interact with Solana's SPL Token program using Gill, a developer-friendly library built on top of Solana Kit. We will be using Gill to build a simple SPL Token application. Specifically, we will show you how to: 
+
+- Mint a new Token
+- Transfer Tokens
+- Burn Tokens
+- Close a Token account
+- Approve and revoke Token approvals
+- Freeze and thaw Token accounts
+- Set Token authority
+
+## Prerequisites
+
+Before starting this guide, ensure you have:
+
+- **Node.js** (v20 or later)
+- **TypeScript** experience
+- **Basic Solana knowledge**: Understanding of accounts, transactions, and programs
+- **Familiarity with functional programming**: Basic understanding of function composition
+- [**Solana CLI**](https://docs.anza.xyz/cli) installed and configured
+- A package manager (we'll use [pnpm](https://pnpm.io/) for this course, but you can use your preferred package manager)
+
+
+## The Token Program
+
+On Solana everything token related is handled by the [SPL Token Program](https://github.com/solana-program/token) and the [Token2022 Program](/en/courses/token-2022-program): Solana's native token framework that defines how all tokens are created, managed, and transferred. 
+
+It's a single, unified program that handles all token operations across the network, ensuring consistency and interoperability.
+
+> The decision of having a single, unified interface for all tokens on Solana creates an easy implementation that can be replicated across all dApps (decentralized applications) and integrations (like wallets, ...)
+
+## Building with Solana Kit and Gill
+
+### What is Solana Kit?
+
+[Solana Kit](https://github.com/anza-xyz/kit) (`@solana/kit`) is a collection of modern JavaScript primitives developed by **Anza** as a high-performance replacement for the legacy `@solana/web3.js` library. Kit delivers significant improvements in bundle size, performance, and type safety through its tree-shakable, functional architecture.
+
+While powerful, Kit's low-level primitives can require complex types and verbose boilerplate for common operations.
+
+### Introducing Gill
+
+[Gill](https://gill.site/) solves this problem by building directly on top of Solana Kit while providing developer-friendly abstractions. The gill library offers **both** Kit's powerful low-level primitives **and** lightly opinionated helpers that simplify common tasks - all from a single, compatible interface.
+
+By reducing boilerplate across the board, Gill lets developers focus on their application's business logic--you get Kit's performance benefits with a dramatically improved developer experience. 
+
+This course will utilize Gill to build a simple SPL Token application.
+
+### Understanding Gill's Approach
+
+Gill does a lot to make building with Solana Kit easy. Two key features that we will take advantage of are: 
+
+1. **Solana Programs**: Gill exports many common Solana programs through the `gill/programs` module. In this course we will be using the System Program,  SPL Token program, and the Metadata Program. You can see all exported programs [here](https://github.com/DecalLabs/gill/blob/master/packages/gill/src/programs/index.ts). Programs and their associated functions can be imported directly from the `gill/programs` module: 
+
+```ts
+import { getCreateAccountInstruction } from 'gill/programs';
+
+const createAccountInstruction = getCreateAccountInstruction({
+    payer,
+    newAccount,
+    lamports: rent,
+    space,
+    programAddress
+});
+```
+
+2. **Sending and confirming transaction instructions**: Gill provides a simple function for sending and confirming transaction instructions. Under the hood, it handles all the complexity of estimating compute units, managing blockhashes, and confirming transactions. We will walk through building SPL Token instructions and use this function to send them to the network: 
+
+```ts
+const signature = await sendAndConfirmInstructions(
+    client,
+    payer,
+    [instruction1, instruction2],
+);
+```
+
+### TypeScript Development Tips
+
+When working with Gill and TypeScript, here are some helpful patterns to ensure smooth development:
+
+#### Type Assertions for Complex Types
+Sometimes Kit's type interface requires explicit typing. When working with addresses or complex types, explicit typing may be needed:
+
+```ts
+import { Address, lamports } from "gill";
+
+const mintAddress: Address = 'MyMintAddress111111111' as Address; // or address('MyMintAddress111111111');
+const amount = lamports(1000n);
+```
+
+#### Working with BigInt
+Gill uses `BigInt` for precise numeric operations. Here are common patterns:
+
+```ts
+// Converting from numbers to BigInt
+const amount = BigInt(1000 * 10 ** decimals);
+const amountAlt = 1000n * 10n ** decimals;
+
+// Type-safe lamport conversions
+const rent = lamports(BigInt(minimumBalance));
+```
+
+#### Error Handling Patterns
+Kit and Gill have access to the [`@solana/errors`](https://github.com/anza-xyz/kit/tree/main/packages/errors) module which provides structured error types for common Solana errors. Parse *SolanaError* to get the error code and context:
+
+```ts
+import { SolanaError } from "gill";
+
+// In your main function
+main().catch((error) => {
+  if (error instanceof SolanaError) {
+    console.error("Solana Error Code:", error.cause);
+    console.error("Context:", error.context);
+  } else {
+    console.error("Error:", error);
+  }
+  process.exit(1);
+});
+```
+
+You can then use the error code to determine the type of error that occurred.
+
+```bash
+npx @solana/errors decode -- 123
+```
+
+## Project Setup
+
+Because Gill and Solana Kit are both built on top of TypeScript, we'll use TypeScript for this course. Let's setup a new TypeScript project and explore Gill's capabilities. 
+
+Initialize a new project:
+
+```bash
+mkdir gill-demo && cd gill-demo
+```
+
+```bash
+pnpm init -y
+```
+
+Install necessary dependencies:
+
+```bash
+pnpm install gill
+```
+
+```bash
+pnpm install --save-dev typescript tsx @types/node
+```
+
+Create a `tsconfig.json` file:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "nodenext",
+    "lib": ["ES2022", "DOM"],
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "nodenext"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+Update your `package.json` scripts:
+
+```json
+{
+  "scripts": {
+    "start": "tsx src/demo.ts",
+    "build": "tsc"
+  }
+}
+```
+
+## Basic Gill Demonstration
+
+Let's create a simple demonstration that showcases Gill's streamlined approach. Create `src/demo.ts`:
+
+```ts
+import {
+  airdropFactory,
+  createSolanaClient,
+  generateKeyPairSigner,
+  KeyPairSigner,
+  lamports,
+  LAMPORTS_PER_SOL,
+  sendAndConfirmInstructions,
+  SolanaClient,
+  getExplorerLink,
+  SolanaError,
+} from "gill";
+import { getAddMemoInstruction } from "gill/programs";
+
+async function setup() {
+  const client = createSolanaClient({
+    urlOrMoniker: "http://127.0.0.1:8899", // or use 'devnet' if you prefer
+  });
+
+  const feePayer = await generateKeyPairSigner();
+
+  await airdropFactory({
+    rpc: client.rpc,
+    rpcSubscriptions: client.rpcSubscriptions,
+  })({
+    commitment: "confirmed",
+    lamports: lamports(BigInt(LAMPORTS_PER_SOL)),
+    recipientAddress: feePayer.address,
+  });
+
+  return { client, feePayer };
+}
+
+async function sendMemo(client: SolanaClient, feePayer: KeyPairSigner) {
+  const memoIx = getAddMemoInstruction({ memo: "Hello, Gill!" });
+  const signature = await sendAndConfirmInstructions(client, feePayer, [
+    memoIx,
+  ]);
+
+  console.log(
+    `Send Memo: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+
+async function main() {
+  const { client, feePayer } = await setup();
+
+  await sendMemo(client, feePayer);
+
+  // 1. Mint to
+
+  // 2. Transfer
+
+  // 3. Burn
+
+  // 4. Close Account
+
+  // 5. Approve and Revoke
+
+  // 6. Freeze and Thaw
+
+  // 7. Set Authority
+}
+
+main().catch((error) => {
+  if (error instanceof SolanaError) {
+    console.error("Solana Error Code:", error.cause);
+    console.error("Context:", error.context);
+  } else {
+    console.error("Error:", error);
+  }
+  process.exit(1);
+});
+```
+
+Here's a breakdown of what's happening in the code:
+
+1. We create a reusable `setup` function that: 
+  - Creates a Solana client using the `createSolanaClient` function.
+  - Generates a key pair signer using the `generateKeyPairSigner` function.
+  - Airdrops 1 SOL to the signer's address using the `airdropFactory` function.
+2. We create a helper function, `sendMemo`, that: 
+  - Creates a memo instruction using the `getAddMemoInstruction` function.
+  - Sends the memo instruction to the network using the `sendAndConfirmInstructions` function.
+3. We call the `sendMemo` function to send a memo to the network.
+
+Easy, right?
+
+We have outlined the steps that we will walk through in the lessons in this course in `main`. They will all follow the same pattern:
+- Assemble instructions from the `gill/programs` module
+- sendAndConfirmInstructions
+- print transaction signature on the explorer
+
+We will run this example on localhost, so we will need to start a local Solana cluster. In a separate terminal, run the following command:
+
+```bash
+solana-test-validator -r
+```
+
+This will start a local Solana cluster on your machine. Now we can run our example:
+
+```bash
+pnpm start
+```
+
+Great! You're now ready to start building with Gill. Let's explore the SPL Token Program. Keep this file as we will build upon it in the next lessons.
+
+## Additional Resources
+
+- **Gill Documentation**: [gill.site](https://gill.site/)
+- **Gill GitHub Repository**: [github.com/DecalLabs/gill](https://github.com/DecalLabs/gill)
+- **Solana Kit Documentation**: [github.com/anza-xyz/kit](https://github.com/anza-xyz/kit)
+- **Token Program Source Code**: [github.com/solana-program/token](https://github.com/solana-program/token)

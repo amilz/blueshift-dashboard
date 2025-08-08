@@ -1,0 +1,181 @@
+import { ArticleSection } from "../../../../components/ArticleSection/ArticleSection";
+
+# Approve and Revoke Instructions
+
+The SPL Token Program provides `approve` and `revoke` instructions that allow you to delegate token spending to another account. This is essential for DeFi protocols like DEXs, lending platforms, and escrow services.
+
+In this lesson, we'll:
+1. Approve a delegate to spend tokens from the owner's account
+2. Revoke that delegation
+
+## Setup
+
+For this lesson, we need to add two new imports to our existing imports:
+
+```ts
+import {
+  getApproveInstruction,
+  getRevokeInstruction,
+} from "gill/programs";
+```
+
+## Approve Function
+
+Let's create our `approve` function. This function will:
+1. Generate a delegate account
+2. Approve the delegate to spend a specific amount of tokens
+
+Add this function after your `closeAccount` function:
+
+```ts
+async function approve(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const delegate = await generateKeyPairSigner();
+  const delegateAmount = BigInt(TOKEN_CONFIG.delegateAmount * 10 ** TOKEN_CONFIG.decimals);
+  
+  const instructions = [
+    getApproveInstruction({
+      source: ata,
+      delegate: delegate.address,
+      owner,
+      amount: delegateAmount,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `5A. Approve: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+
+  return delegate;
+}
+```
+
+## Revoke Function
+
+Now let's create our `revoke` function. This function will:
+1. Revoke all delegate permissions on the account
+
+Add this function after your `approve` function:
+
+```ts
+async function revoke(
+  client: SolanaClient,
+  feePayer: KeyPairSigner,
+  owner: KeyPairSigner,
+  ata: Address
+) {
+  const instructions = [
+    getRevokeInstruction({
+      source: ata,
+      owner,
+    }, { programAddress: TOKEN_PROGRAM_ADDRESS }),
+  ];
+
+  const signature = await sendAndConfirmInstructions(client, feePayer, instructions);
+  console.log(
+    `5B. Revoke: ${getExplorerLink({
+      cluster: "localhost",
+      transaction: signature,
+    })}`
+  );
+}
+```
+
+**`getApproveInstruction`** requires:
+- **`source`**: The token account to delegate from
+- **`delegate`**: The account that will have permission to transfer tokens
+- **`owner`**: The current owner of the token account (must sign)
+- **`amount`**: The maximum amount the delegate can transfer
+
+**`getRevokeInstruction`** requires:
+- **`source`**: The token account to revoke delegation from
+- **`owner`**: The current owner of the token account (must sign)
+
+Note that revoke removes ALL delegate permissions - there's no partial revoke.
+
+## Main Function
+
+Now update your `main` function to call both functions:
+
+```ts
+async function main() {
+  const { client, feePayer } = await setup();
+
+  // 1. Mint to
+  const { mint, mintAuthority, owner, ata } = await mintTo(client, feePayer);
+
+  // 2. Transfer
+  const { receiver, receiverAta } = await transfer(client, feePayer, mint, owner, ata);
+
+  // 3. Burn from receiver's account
+  await burn(client, feePayer, mint, receiver, receiverAta);
+
+  // 4. Close Account
+  await closeAccount(client, feePayer, mint, receiver, receiverAta);
+
+  // 5. Approve and Revoke
+  await approve(client, feePayer, owner, ata);
+  await revoke(client, feePayer, owner, ata);
+
+  // 6 - 7...Future lessons
+
+}
+```
+
+## Running the Code
+
+Make sure your local validator is running:
+
+```bash
+solana-test-validator -r
+```
+
+Then run your code:
+
+```bash
+pnpm start
+```
+
+You should see output like:
+```bash
+1. Mint to: https://explorer.solana.com/tx/...?cluster=localhost
+2. Transfer: https://explorer.solana.com/tx/...?cluster=localhost
+3. Burn: https://explorer.solana.com/tx/...?cluster=localhost
+4. Close Account: https://explorer.solana.com/tx/...?cluster=localhost
+5A. Approve: https://explorer.solana.com/tx/...?cluster=localhost
+5B. Revoke: https://explorer.solana.com/tx/...?cluster=localhost
+```
+
+## How Delegation Works
+
+After approval:
+- The delegate can transfer up to 100 tokens from the owner's account
+- The owner still owns the tokens and can transfer them independently
+- If the owner transfers tokens, the delegate's allowance remains the same
+
+After revocation:
+- The delegate can no longer transfer any tokens
+- The owner would need to approve again to restore permissions
+
+## Security Considerations
+
+Delegation is a powerful feature, but it also introduces security risks. If you delegate tokens to a malicious account, that account could transfer all of your tokens.
+
+Cleanup is important. Make sure to revoke all delegates when you no longer need them.
+
+## Key Concepts
+
+- **Delegation**: Allows third parties to spend your tokens up to a limit.
+- **Non-custodial**: The owner retains full control and can revoke or spend tokens at any time.
+- **Single Delegate**: Each token account can only have one delegate at a time. Approving a new delegate automatically replaces any existing delegate.
+- **Use Cases**: DEX trading, lending protocols, escrow services, etc.
+
+In the next lesson, we'll learn how to freeze and thaw token accounts.
